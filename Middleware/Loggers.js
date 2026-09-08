@@ -4,7 +4,7 @@
 //  Intercepts requests, sanitizes the data, and writes to AuditLog.
 // ===============================================================
 
-const AuditLog = require('../Models/AuditLog');
+const AuditLog = require('../Models/AuditLogs');
 
 // ==============================================================
 // SYSTEM AUDIT LOGGER FUNCTION

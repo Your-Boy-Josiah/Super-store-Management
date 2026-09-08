@@ -11,7 +11,7 @@ const router = express.Router();
 const UserController = require('../Controllers/User_Controller');
 
 // Import Multer Upload Middleware
-const { upload } = require('../Middleware/Upload');
+const { upload } = require('../Middleware/Uploads');
 
 // ============================================================
 // REGISTER A NEW USER

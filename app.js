@@ -1,5 +1,5 @@
 // ===============================================================
-//  app (Main Server Entry Point)
+//  app.js (Main Server Entry Point)
 //  Initializes Express, connects to MongoDB, mounts all global 
 //  middlewares, and registers the API route handlers.
 // ===============================================================
@@ -11,14 +11,15 @@ const helmet = require('helmet'); // Security Headers
 const rateLimit = require('express-rate-limit'); // Brute-force protection
 const mongoSanitize = require('express-mongo-sanitize'); // NoSQL Injection protection
 require('dotenv').config(); 
-const connectDB = require('./Config/Database_Config');
+const connectDB = require('./Config/Database_Configs'); // MongoDB connection utility
 
 // Import Routers
-const ProductRoute = require('./Routes/Product_Routes');
-const UserRoute    = require('./Routes/User_Routes');
+const ProductRoute = require('./Routes/Products_Routes');
+const UserRoute    = require('./Routes/Users_Routes');
 const SalesRoute   = require('./Routes/Sales_Routes');
-const RestockRoute = require('./Routes/Restock_Routes');
-const ReportRoute  = require('./Routes/Report_Routes'); // Dashboard
+const RestockRoute = require('./Routes/Restocks_Routes');
+const ReportRoute  = require('./Routes/Reports_Routes'); // Dashboard
+const AccessRoute  = require('./Routes/Access_Routes'); // Admin PIN Generation
 
 // Import Custom Middlewares
 const { systemLogger } = require('./Middleware/Loggers');
@@ -47,9 +48,8 @@ app.use('/api', limiter); // Apply to all /api routes
 // ============================================================
 
 const corsOptions = {
-  // Add the URL of your frontend / POS system here. 
-  // (We use localhost:3000 as a placeholder for React/Next.js)
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'], 
+  // Added your React Vite ports (5173) so the frontend can securely connect
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://127.0.0.1:3000'], 
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true, 
 };
@@ -89,6 +89,7 @@ app.use('/api/products', ProductRoute);
 app.use('/api/sales', SalesRoute);
 app.use('/api/restock', RestockRoute);
 app.use('/api/reports', ReportRoute); 
+app.use('/api/access', AccessRoute); // Mounted Admin PIN bypass routes
 
 // ==============================================================
 // 404 FALLBACK ROUTE

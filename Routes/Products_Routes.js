@@ -11,11 +11,11 @@ const router = express.Router();
 const ProductController = require('../Controllers/Product_Controller');
 
 // Import Security Middlewares
-const { verifyToken } = require('../Middleware/auth');
-const { authorizeRoles } = require('../Middleware/role');
+const { verifyToken } = require('../Middleware/Auths');
+const { authorizeRoles } = require('../Middleware/Roles');
 
 // Import Multer Upload & Image Processing Middlewares
-const { upload, processImage } = require('../Middleware/Upload');
+const { upload, processImage } = require('../Middleware/Uploads');
 
 // ============================================================
 // GET ALL PRODUCTS  (Pagination + Search + Filters)

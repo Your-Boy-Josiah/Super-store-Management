@@ -5,9 +5,9 @@
 
 const express = require('express');
 const router = express.Router();
-const SalesController = require('../Controllers/Sale_Controller');
-const { verifyToken } = require('../Middleware/auth');
-const { authorizeRoles } = require('../Middleware/role');
+const SalesController = require('../Controllers/Sales_Controller');
+const { verifyToken } = require('../Middleware/Auths');
+const { authorizeRoles } = require('../Middleware/Roles');
 
 // ============================================================
 // PROCESS CHECKOUT

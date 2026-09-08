@@ -6,8 +6,8 @@
 const express = require('express');
 const router = express.Router();
 const RestockController = require('../Controllers/Restock_Controller');
-const { verifyToken } = require('../Middleware/Auth');
-const { authorizeRoles } = require('../Middleware/Role');
+const { verifyToken } = require('../Middleware/Auths');
+const { authorizeRoles } = require('../Middleware/Roles');
 
 // ============================================================
 // PROCESS RESTOCK

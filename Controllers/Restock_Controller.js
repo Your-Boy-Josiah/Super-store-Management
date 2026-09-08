@@ -1,21 +1,22 @@
 // ===============================================================
-//  Restock_Controller
-//  Handles the processing of incoming deliveries.
-//  Uses MongoDB Transactions to securely log the delivery and 
-//  increases the store's inventory quantity simultaneously. (if needed)
-// ======================================================================
+//  Restock_Controller.js
+//  Handles the processing of incoming supplier deliveries.
+//  Uses MongoDB Transactions to securely log the delivery and
+//  increase the store's inventory quantity simultaneously.
+//  Integrated with Audit_Service.js to log restock activity.
+// ===============================================================
 
-const Restock = require('../Models/Restock');
+const Restock = require('../Models/Restocks');
 const Product = require('../Models/Products');
-const Supplier = require('../Models/Supplier');
+const Supplier = require('../Models/Suppliers');
 const PM = require('mongoose');
+const AuditService = require('../Services/Audit_Services');
 
 // ==============================================================
 // PROCESS INCOMING DELIVERY (RESTOCK)
 // Route  : POST /api/restock
-// Access : Store_Keepers, Admins, Super_Admin
+// Access : Store_Keeper, Admin, Super_Admin
 // ==============================================================
-
 exports.ProcessRestock = async (req, res) => {
   // Start a MongoDB session to enable the transaction bubble
   const session = await PM.startSession();
@@ -38,19 +39,19 @@ exports.ProcessRestock = async (req, res) => {
       return res.status(400).json({ message: 'Please provide productId, supplierId, quantityAdded, and unitCost' });
     }
 
-    // Verify the Supplier exists
+    // Step 1: Verify the Supplier exists
     const supplier = await Supplier.findById(supplierId).session(session);
     if (!supplier || !supplier.isActive) {
       throw new Error('Supplier not found or is currently inactive');
     }
 
-    // Verify the Product exists
+    // Step 2: Verify the Product exists
     const product = await Product.findById(productId).session(session);
     if (!product || !product.isActive) {
       throw new Error('Product not found or is currently inactive');
     }
 
-    // Update the Product Inventory
+    // Step 3: Update the Product Inventory
     // We add the newly delivered boxes to the existing stock
     product.quantity += Number(quantityAdded);
     
@@ -65,13 +66,13 @@ exports.ProcessRestock = async (req, res) => {
     // Save the updated product data
     await product.save({ session });
 
-    // Generate a unique Delivery Number (e.g., DEL-20260903-789012)
-    const datePrefix = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    // Step 4: Generate a unique Delivery Number (e.g., DEL-20260903-789012)
+    const datePrefix = new Date().toISOString().split('T').replace(/-/g, '');
     const randomSuffix = Math.floor(100000 + Math.random() * 900000); 
     const deliveryNumber = `DEL-${datePrefix}-${randomSuffix}`;
 
-    // Create the Restock Ledger Entry
-    // We get the staff member's ID from req.user authentication middleware
+    // Step 5: Create the Restock Ledger Entry
+    // We get the staff member's ID from req.user (injected by auth.js)
     const newRestock = new Restock({
       deliveryNumber,
       productId,
@@ -86,11 +87,21 @@ exports.ProcessRestock = async (req, res) => {
 
     const savedRestock = await newRestock.save({ session });
 
-    // Store the Transaction (if successful) and commit all changes to the database
+    // Step 6: Commit the Transaction (Success!)
     await session.commitTransaction();
     session.endSession();
 
+    // Step 7: Audit Log: Record successful restock processing
+    await AuditService.logActivity(req, 201, 'RESTOCK_PROCESSED', {
+      deliveryNumber,
+      productId,
+      supplierId,
+      quantityAdded: Number(quantityAdded),
+      unitCost: Number(unitCost)
+    });
+
     return res.status(201).json({
+      success: true,
       message: 'Restock processed successfully',
       restockRecord: savedRestock,
     });
@@ -99,6 +110,7 @@ exports.ProcessRestock = async (req, res) => {
     // Abort and rollback all changes if anything fails
     await session.abortTransaction();
     session.endSession();
+
     console.error('Restock Transaction Error:', error);
 
     // Differentiate between our custom validation errors and server crashes
@@ -113,9 +125,8 @@ exports.ProcessRestock = async (req, res) => {
 // ==============================================================
 // GET RESTOCK HISTORY (THE LEDGER)
 // Route  : GET /api/restock
-// Access : Admins, Super_Admin
+// Access : Admin, Super_Admin
 // ==============================================================
-
 exports.GetRestockHistory = async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);

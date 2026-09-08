@@ -1,13 +1,15 @@
 // ===============================================================
-//  Product_Controller
+//  Product_Controller.js
 //  Handles all CRUD operations for the Product resource.
 //  Imported by Routes and mounted under /api/products.
+//  Integrated with Audit_Service.js to track product modifications.
 // ===============================================================
 
 const Product = require('../Models/Products');
 const PM = require('mongoose');
 const fs = require('fs');
 const path = require('path');
+const AuditService = require('../Services/Audit_Services');
 
 // Helper tool to stop users from crashing the search with special characters like ( or *
 const escapeRegex = (text) => {
@@ -33,19 +35,33 @@ const deleteOldImage = (imagePath) => {
 // ==============================================================
 // CREATE A NEW PRODUCT
 // Route  : POST /api/products/CreateProduct
-// Access : Store_Keepers, Admins, Super_Admin
+// Access : Store_Keeper, Admin, Super_Admin
 // ==============================================================
-
 exports.CreateProduct = async (req, res) => {
   try {
     const {
-      name, barcode, sku, category, costPrice, sellingPrice,
-      quantity, unit, size, reorderLevel, isPerishable,
-      expiryDate, description, supplierId,
+      name,
+      barcode,
+      sku,
+      category,
+      costPrice,
+      sellingPrice,
+      quantity,
+      unit,
+      size,
+      reorderLevel,
+      isPerishable,
+      expiryDate,
+      description,
+      supplierId,
     } = req.body;
 
+    // Validate mandatory fields
     if (
-      !name || !barcode || !category || !supplierId || 
+      !name || 
+      !barcode || 
+      !category || 
+      !supplierId ||
       costPrice === undefined || costPrice === '' ||
       sellingPrice === undefined || sellingPrice === '' ||
       quantity === undefined || quantity === ''
@@ -55,11 +71,13 @@ exports.CreateProduct = async (req, res) => {
       });
     }
 
+    // Check for barcode collision
     const existingBarcode = await Product.findOne({ barcode: barcode.trim() });
     if (existingBarcode) {
       return res.status(409).json({ message: 'A product with this barcode already exists' });
     }
 
+    // Check for SKU collision if provided
     if (sku && sku.trim()) {
       const existingSku = await Product.findOne({ sku: sku.trim().toUpperCase() });
       if (existingSku) {
@@ -67,10 +85,12 @@ exports.CreateProduct = async (req, res) => {
       }
     }
 
+    // Handle Product Image (Multer)
     const imagePath = req.file
       ? `uploads/${req.file.filename}`
       : 'uploads/default-product.png';
 
+    // Build the new Product document
     const product = new Product({
       name: name.trim(),
       barcode: barcode.trim(),
@@ -92,6 +112,14 @@ exports.CreateProduct = async (req, res) => {
 
     const savedProduct = await product.save();
 
+    // Audit Log: Record successful product creation
+    await AuditService.logActivity(req, 201, 'PRODUCT_CREATED', {
+      productId: savedProduct._id,
+      name: savedProduct.name,
+      barcode: savedProduct.barcode,
+      quantity: savedProduct.quantity
+    });
+
     return res.status(201).json({
       success: true,
       message: 'Product created successfully',
@@ -100,10 +128,9 @@ exports.CreateProduct = async (req, res) => {
 
   } catch (error) {
     if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern || error.keyValue)[0];
+      const field = Object.keys(error.keyPattern || error.keyValue);
       return res.status(409).json({ message: `Duplicate value for ${field}` });
     }
-
     console.error('Error creating product:', error);
     return res.status(500).json({ message: 'Error creating product', error: error.message });
   }
@@ -112,24 +139,23 @@ exports.CreateProduct = async (req, res) => {
 // ============================================================
 // GET ALL PRODUCTS  (Search + Filter + Pagination)
 // Route  : GET /api/products?page=1&limit=20&search=milk&category=dairy&lowStock=true
-// Access : Authenticated Staff
+// Access : Any logged-in staff
 // ============================================================
-
 exports.GetProducts = async (req, res) => {
   try {
-    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-    const skip  = (page - 1) * limit;
-    
+    const skip = (page - 1) * limit;
+
     const { search, category, lowStock } = req.query;
     const query = { isActive: true };
-    
+
     if (search) {
       const safeSearch = escapeRegex(search.trim());
       query.$or = [
-        { name:    { $regex: safeSearch, $options: 'i' } },
+        { name: { $regex: safeSearch, $options: 'i' } },
         { barcode: { $regex: safeSearch, $options: 'i' } },
-        { sku:     { $regex: safeSearch, $options: 'i' } },
+        { sku: { $regex: safeSearch, $options: 'i' } },
       ];
     }
 
@@ -168,12 +194,11 @@ exports.GetProducts = async (req, res) => {
 // Route  : GET /api/products/barcode/:barcode
 // Access : Authenticated Staff
 // ============================================================
-
 exports.GetProductByBarcode = async (req, res) => {
   try {
     const { barcode } = req.params;
-    const product = await Product.findOne({ barcode: barcode.trim(), isActive: true });
 
+    const product = await Product.findOne({ barcode: barcode.trim(), isActive: true });
     if (!product) {
       return res.status(404).json({ message: 'Product not found with this barcode' });
     }
@@ -189,9 +214,8 @@ exports.GetProductByBarcode = async (req, res) => {
 // ============================================================
 // UPDATE A PRODUCT
 // Route  : PUT /api/products/:id
-// Access : Store_Keeper, Admins, Super_Admin
+// Access : Store_Keeper, Admin, Super_Admin
 // ============================================================
-
 exports.UpdateProduct = async (req, res) => {
   try {
     const { id } = req.params;
@@ -210,8 +234,7 @@ exports.UpdateProduct = async (req, res) => {
 
     if (updateData.sku) updateData.sku = updateData.sku.trim().toUpperCase();
     if (updateData.barcode) updateData.barcode = updateData.barcode.trim();
-    if (updateData.supplierId) updateData.supplierId = updateData.supplierId.trim(); 
-    
+    if (updateData.supplierId) updateData.supplierId = updateData.supplierId.trim();
     if (updateData.costPrice !== undefined && updateData.costPrice !== '') updateData.costPrice = Number(updateData.costPrice);
     if (updateData.sellingPrice !== undefined && updateData.sellingPrice !== '') updateData.sellingPrice = Number(updateData.sellingPrice);
     if (updateData.quantity !== undefined && updateData.quantity !== '') updateData.quantity = Number(updateData.quantity);
@@ -221,7 +244,6 @@ exports.UpdateProduct = async (req, res) => {
     // If a new product image was uploaded during the update...
     if (req.file) {
       updateData.image = `uploads/${req.file.filename}`;
-      
       // ...delete the old image from the hard drive!
       deleteOldImage(existingProduct.image);
     }
@@ -229,6 +251,13 @@ exports.UpdateProduct = async (req, res) => {
     const updatedProduct = await Product.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
+    });
+
+    // Audit Log: Record successful product update
+    await AuditService.logActivity(req, 200, 'PRODUCT_UPDATED', {
+      productId: updatedProduct._id,
+      name: updatedProduct.name,
+      updatedFields: Object.keys(updateData)
     });
 
     return res.status(200).json({
@@ -239,10 +268,9 @@ exports.UpdateProduct = async (req, res) => {
 
   } catch (error) {
     if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern || error.keyValue)[0];
+      const field = Object.keys(error.keyPattern || error.keyValue);
       return res.status(409).json({ message: `Duplicate value for ${field}` });
     }
-
     console.error('Error updating product:', error);
     return res.status(500).json({ message: 'Error updating product', error: error.message });
   }
@@ -251,12 +279,12 @@ exports.UpdateProduct = async (req, res) => {
 // ============================================================
 // SOFT DELETE A PRODUCT  (Archive / Deactivation)
 // Route  : DELETE /api/products/:id
-// Access : Admins, Super_Admin
+// Access : Admin, Super_Admin
 // ============================================================
-
 exports.DeleteProduct = async (req, res) => {
   try {
     const { id } = req.params;
+
     if (!PM.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: 'Invalid product ID' });
     }
@@ -271,11 +299,17 @@ exports.DeleteProduct = async (req, res) => {
       return res.status(404).json({ message: 'Product not found' });
     }
 
-    return res.status(200).json({ 
-      success: true, 
-      message: 'Product archived/deactivated successfully' 
+    // Audit Log: Record successful product deactivation
+    await AuditService.logActivity(req, 200, 'PRODUCT_DEACTIVATED', {
+      productId: product._id,
+      name: product.name
     });
-    
+
+    return res.status(200).json({
+      success: true,
+      message: 'Product archived/deactivated successfully'
+    });
+
   } catch (error) {
     console.error('Error archiving product:', error);
     return res.status(500).json({ message: 'Error deleting product', error: error.message });
