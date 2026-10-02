@@ -1,147 +1,92 @@
-// ===============================================================
-//  Access_Controller.js
-//  Handles the generation of secure, temporary 6-digit access PINs.
-//  Bypasses restrictions on sales history and reporting dashboard modules.
-//  Integrated with Time_Shift.js to enforce business working hours.
-// ===============================================================
-
-const AccessCode = require('../Models/AccessCodes');
-const User = require('../Models/Users');
-const TimeShift = require('../Utililty/Time_Shift');
-const AuditService = require('../Services/Audit_Services');
-
-// ==============================================================
-// GENERATE A TEMPORARY ACCESS PIN (ADMIN-ONLY)
-// Route  : POST /api/access/generate
-// Access : Admin, Super_Admin
-// ==============================================================
-exports.GeneratePIN = async (req, res) => {
+const AccessCode = require("../Models/AccessCodes");
+const User = require("../Models/Users");
+const mongoose = require("mongoose");
+const { randomInt, createHmac } = require("node:crypto");
+const TimeShift = require("../Utililty/Time_Shift");
+const Audit = require("../Services/Audit_Services");
+const hash = (code) =>
+  createHmac("sha256", process.env.JWT_SECRET).update(code).digest("hex");
+exports.hashPIN = hash;
+exports.GeneratePIN = async (req, res, next) => {
+  const { assignedTo } = req.body;
+  const durationSeconds =
+    req.body.durationSeconds === undefined
+      ? 14400
+      : Number(req.body.durationSeconds);
+  if (
+    !mongoose.isValidObjectId(assignedTo) ||
+    !Number.isSafeInteger(durationSeconds) ||
+    durationSeconds < 60 ||
+    durationSeconds > 28800
+  )
+    return res
+      .status(400)
+      .json({
+        message:
+          "Choose a Store Keeper and a duration of 60–28800 working seconds",
+      });
   try {
-    const { assignedTo, durationSeconds } = req.body;
-
-    // 1. Validate mandatory input
-    if (!assignedTo) {
-      return res.status(400).json({ message: 'Please specify the Store Keeper (assignedTo ID) for this PIN' });
-    }
-
-    // 2. Validate that the targeted user exists and is a Store_Keeper
-    const targetUser = await User.findById(assignedTo);
-    if (!targetUser || !targetUser.isActive) {
-      return res.status(404).json({ message: 'Target Store Keeper not found or inactive' });
-    }
-    if (targetUser.role !== 'Store_Keeper') {
-      return res.status(400).json({ message: 'Temporary PINs can only be generated for Store Keeper accounts' });
-    }
-
-    // 3. Generate a secure, unique 6-digit random PIN
-    let pinCode;
-    let codeExists = true;
-    
-    while (codeExists) {
-      pinCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const duplicateCheck = await AccessCode.findOne({ code: pinCode, isActive: true });
-      if (!duplicateCheck) {
-        codeExists = false;
-      }
-    }
-
-    // 4. Calculate the time-shifted expiration date (pauses overnight/weekends)
-    const spanSeconds = durationSeconds ? Number(durationSeconds) : 14400; // 4 hours default
-    const expiryDate = TimeShift.calculateShiftedExpiry(new Date(), spanSeconds);
-
-    // 5. Save the PIN record into the database
-    const newAccessCode = new AccessCode({
-      code: pinCode,
-      generatedBy: req.user.id, // Admin creating the PIN
-      assignedTo: targetUser._id,
-      durationSeconds: spanSeconds,
-      expiresAt: expiryDate,
+    const user = await User.findById(assignedTo);
+    if (!user?.isActive || user.role !== "Store_Keeper")
+      return res.status(400).json({ message: "Choose an active Store Keeper" });
+    const pin = String(randomInt(100000, 1000000));
+    const expiresAt = TimeShift.calculateShiftedExpiry(
+      new Date(),
+      durationSeconds,
+    );
+    const record = await AccessCode.create({
+      code: hash(pin),
+      assignedTo,
+      generatedBy: req.user.id,
+      durationSeconds,
+      expiresAt,
     });
-
-    await newAccessCode.save();
-
-    // 6. Audit Log: Log the PIN generation event
-    await AuditService.logActivity(req, 201, 'ACCESS_PIN_GENERATED', {
-      assignedToUser: targetUser.email,
-      durationSeconds: spanSeconds,
-      expiresAt: expiryDate
+    await Audit.logActivity(req, 201, "ACCESS_PIN_GENERATED", {
+      assignedTo,
+      expiresAt,
     });
-
-    return res.status(201).json({
-      success: true,
-      message: 'Temporary PIN generated successfully',
-      pin: pinCode,
-      expiresAt: expiryDate,
-      assignedTo: {
-        id: targetUser._id,
-        name: targetUser.name,
-        email: targetUser.email
-      }
-    });
-
+    res
+      .status(201)
+      .json({
+        success: true,
+        pin,
+        expiresAt,
+        assignedTo: { id: user.id, name: user.name },
+        id: record.id,
+      });
   } catch (error) {
-    console.error('Error generating PIN:', error);
-    return res.status(500).json({ message: 'Error generating access PIN', error: error.message });
+    next(error);
   }
 };
-
-// ==============================================================
-// VERIFY TEMPORARY ACCESS PIN (STORE-KEEPER WORKFLOW)
-// Route  : POST /api/access/verify
-// Access : Public/Store_Keeper
-// ==============================================================
-exports.VerifyPIN = async (req, res) => {
+exports.VerifyPIN = async (req, res, next) => {
+  const { code } = req.body;
+  if (typeof code !== "string" || !/^\d{6}$/.test(code))
+    return res.status(400).json({ message: "Provide a six-digit PIN" });
   try {
-    const { code } = req.body;
-
-    if (!code) {
-      return res.status(400).json({ message: 'Please provide the 6-digit PIN code to verify' });
-    }
-
-    // Find the code and populate the generator and assigned users
-    const record = await AccessCode.findOne({ code: code.trim(), isActive: true })
-      .populate('generatedBy', 'name email')
-      .populate('assignedTo', 'name email');
-
-    // If the PIN doesn't exist or is deactivated
-    if (!record) {
-      await AuditService.logActivity(req, 401, 'ACCESS_PIN_VERIFICATION_FAILED', { attemptedCode: code });
-      return res.status(401).json({ message: 'Invalid or deactivated PIN' });
-    }
-
-    // If the PIN has expired based on our calendar calculations
-    const now = new Date();
-    if (record.expiresAt < now) {
-      record.isActive = false; // Mark as inactive so we don't try to parse it again
-      await record.save();
-
-      await AuditService.logActivity(req, 401, 'ACCESS_PIN_EXPIRED', { expiredCode: code });
-      return res.status(401).json({ message: 'This PIN has expired' });
-    }
-
-    // Audit Log: Record successful verification
-    await AuditService.logActivity(req, 200, 'ACCESS_PIN_VERIFICATION_SUCCESS', {
-      verifiedCode: '******',
-      assignedToUser: record.assignedTo.email,
-      authorizedBy: record.generatedBy.email
+    const record = await AccessCode.findOne({
+      code: hash(code),
+      assignedTo: req.user.id,
+      isActive: true,
+      expiresAt: { $gt: new Date() },
     });
-
-    return res.status(200).json({
-      success: true,
-      message: 'PIN verified successfully. Temporary access granted.',
-      auth: {
-        assignedTo: {
-          id: record.assignedTo._id,
-          name: record.assignedTo.name,
-          email: record.assignedTo.email,
-        },
-        expiresAt: record.expiresAt,
-        durationRemainingSeconds: Math.max(0, Math.floor((record.expiresAt - now) / 1000))
-      }
+    const issuer = record && (await User.findById(record.generatedBy));
+    if (
+      !record ||
+      !issuer?.isActive ||
+      !["Admin", "Super_Admin"].includes(issuer.role)
+    )
+      return res
+        .status(403)
+        .json({
+          message: "PIN is invalid, expired or assigned to another user",
+        });
+    record.verifiedAt = new Date();
+    await record.save();
+    await Audit.logActivity(req, 200, "ACCESS_PIN_VERIFIED", {
+      accessId: record.id,
     });
-
+    res.json({ success: true, auth: { expiresAt: record.expiresAt } });
   } catch (error) {
-    console.error('Error verifying PIN:', error);
-    return res.status(500).json({ message: 'Error verifying PIN', error: error.message });
+    next(error);
   }
 };

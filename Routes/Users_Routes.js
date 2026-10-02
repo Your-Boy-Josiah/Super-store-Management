@@ -1,36 +1,27 @@
-// ===============================================================
-//  User_Routes
-//  Handles all routing for User-related API endpoints.
-//  Mounted under /api/users in app.js.
-// ===============================================================
-
-const express = require('express');
-const router = express.Router(); 
-
-// Import Controller
-const UserController = require('../Controllers/User_Controller');
-
-// Import Multer Upload Middleware
-const { upload } = require('../Middleware/Uploads');
-
-// ============================================================
-// REGISTER A NEW USER
-// Route  : POST /api/users/CreateUser
-// Access : Public
-// Payload: multipart/form-data (name, email, password, gender, phone_number, age, avatar [file])
-// ============================================================
+const router = require("express").Router();
+const UserController = require("../Controllers/User_Controller");
+const { upload, processImage } = require("../Middleware/Uploads");
+const { removeImage } = require("../Utililty/Files");
+// Uploaded files are removed whenever registration is rejected.
 router.post(
-  '/CreateUser', 
-  upload.single('avatar'), 
-  UserController.CreateUser
+  "/CreateUser",
+  (req, res, next) => {
+    if (process.env.ALLOW_PUBLIC_SIGNUP !== "true")
+      return res
+        .status(403)
+        .json({ message: "Ask an administrator to create your account" });
+    next();
+  },
+  upload.single("avatar"),
+  processImage,
+  (req, res, next) => {
+    res.on("finish", () => {
+      if (res.statusCode >= 400 && req.file)
+        void removeImage("uploads/" + req.file.filename);
+    });
+    next();
+  },
+  UserController.CreateUser,
 );
-
-// ============================================================
-// LOGIN USER
-// Route  : POST /api/users/LoginUser
-// Access : Public
-// Payload: application/json (email, password)
-// ============================================================
-router.post('/LoginUser', UserController.LoginUser);
-
+router.post("/LoginUser", UserController.LoginUser);
 module.exports = router;

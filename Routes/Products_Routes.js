@@ -4,30 +4,34 @@
 //  Imported by app.js and mounted under /api/products.
 // ============================================================
 
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
 // Import Controller
-const ProductController = require('../Controllers/Product_Controller');
+const ProductController = require("../Controllers/Product_Controller");
 
 // Import Security Middlewares
-const { verifyToken } = require('../Middleware/Auths');
-const { authorizeRoles } = require('../Middleware/Roles');
+const { verifyToken } = require("../Middleware/Auths");
+const { authorizeRoles } = require("../Middleware/Roles");
 
 // Import Multer Upload & Image Processing Middlewares
-const { upload, processImage } = require('../Middleware/Uploads');
+const { upload, processImage } = require("../Middleware/Uploads");
 
 // ============================================================
 // GET ALL PRODUCTS  (Pagination + Search + Filters)
 // Access : Any logged-in staff
 // ============================================================
-router.get('/', verifyToken, ProductController.GetProducts);
+router.get("/", verifyToken, ProductController.GetProducts);
 
 // ============================================================
 // GET PRODUCT BY BARCODE  (POS Scanner Lookup)
 // Access : Any logged-in staff
 // ============================================================
-router.get('/barcode/:barcode', verifyToken, ProductController.GetProductByBarcode);
+router.get(
+  "/barcode/:barcode",
+  verifyToken,
+  ProductController.GetProductByBarcode,
+);
 
 // ============================================================
 // CREATE A NEW PRODUCT
@@ -35,12 +39,21 @@ router.get('/barcode/:barcode', verifyToken, ProductController.GetProductByBarco
 // Payload: multipart/form-data with optional 'image' file
 // ============================================================
 router.post(
-  '/CreateProduct', 
-  verifyToken, 
-  authorizeRoles('Store_Keeper', 'Admin', 'Super_Admin'), 
-  upload.single('image'), 
+  "/CreateProduct",
+  verifyToken,
+  authorizeRoles("Store_Keeper", "Admin", "Super_Admin"),
+  upload.single("image"),
   processImage,
-  ProductController.CreateProduct
+  (req, res, next) => {
+    res.on("finish", () => {
+      if (res.statusCode >= 400 && req.file)
+        void require("../Utililty/Files").removeImage(
+          "uploads/" + req.file.filename,
+        );
+    });
+    next();
+  },
+  ProductController.CreateProduct,
 );
 
 // ============================================================
@@ -49,12 +62,12 @@ router.post(
 // Payload: multipart/form-data or application/json with optional 'image' file
 // ============================================================
 router.put(
-  '/:id', 
-  verifyToken, 
-  authorizeRoles('Store_Keeper', 'Admin', 'Super_Admin'), 
-  upload.single('image'), 
+  "/:id",
+  verifyToken,
+  authorizeRoles("Store_Keeper", "Admin", "Super_Admin"),
+  upload.single("image"),
   processImage,
-  ProductController.UpdateProduct
+  ProductController.UpdateProduct,
 );
 
 // ============================================================
@@ -62,10 +75,10 @@ router.put(
 // Access : Management Only (Admin, Super_Admin)
 // ============================================================
 router.delete(
-  '/:id', 
-  verifyToken,  
-  authorizeRoles('Admin', 'Super_Admin'), 
-  ProductController.DeleteProduct
+  "/:id",
+  verifyToken,
+  authorizeRoles("Admin", "Super_Admin"),
+  ProductController.DeleteProduct,
 );
 
 // Export the router to be mounted in app.js

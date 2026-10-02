@@ -4,7 +4,7 @@
 //  Gives Store_Keepers time-bound, shifting access to reports.
 // ===============================================================
 
-const PM = require('mongoose');
+const PM = require("mongoose");
 
 // ==============================================================
 // SCHEMA DEFINITION
@@ -21,13 +21,13 @@ const accessCodeSchema = new PM.Schema(
     // The Administrator who authorized this bypass
     generatedBy: {
       type: PM.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     // The Store_Keeper who is granted temporary access
     assignedTo: {
       type: PM.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     // Original total active duration in seconds (e.g. 14400 for 4 hours)
@@ -41,6 +41,7 @@ const accessCodeSchema = new PM.Schema(
       type: Date,
       required: true,
     },
+    verifiedAt: { type: Date, default: null },
     // Has this code been manually revoked or deactivated?
     isActive: {
       type: Boolean,
@@ -49,15 +50,15 @@ const accessCodeSchema = new PM.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
-// Add an index to automatically remove expired records from MongoDB 
+// Add an index to automatically remove expired records from MongoDB
 // to keep your database light and fast
 accessCodeSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // ============================================================
 // MODEL COMPILATION & EXPORT
 // ============================================================
-const AccessCode = PM.model('AccessCode', accessCodeSchema);
+const AccessCode = PM.model("AccessCode", accessCodeSchema);
 module.exports = AccessCode;
