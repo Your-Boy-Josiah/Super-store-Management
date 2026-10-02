@@ -875,12 +875,13 @@ function Products({ request, user }) {
               fields={productFields}
               initial={dialog}
               suppliers={suppliers}
-              submit={(body) =>
-                request("/products/" + (dialog._id || "CreateProduct"), {
+              submit={(body) => {
+                if (dialog._id) body.set("expectedUpdatedAt", dialog.updatedAt);
+                return request("/products/" + (dialog._id || "CreateProduct"), {
                   method: dialog._id ? "PUT" : "POST",
                   body,
-                })
-              }
+                });
+              }}
               onDone={done}
             />
           )}

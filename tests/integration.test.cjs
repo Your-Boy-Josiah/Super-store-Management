@@ -409,3 +409,123 @@ test("staff management and supplier creation are restricted", async () => {
     .send({ isActive: false })
     .expect(403);
 });
+
+test("multiple products can be edited with a blank optional SKU", async () => {
+  for (const p of [await product(), await product()]) {
+    await request(app)
+      .put("/api/products/" + p.id)
+      .set("Authorization", auth(keeper))
+      .send({ sku: "", name: p.name + " edited" })
+      .expect(200);
+    assert.equal((await Product.findById(p.id)).sku, undefined);
+  }
+});
+
+test("stale inventory forms cannot restore stock already sold", async () => {
+  const p = await product();
+  const snapshot = p.updatedAt.toISOString();
+  await request(app)
+    .post("/api/sales/checkout")
+    .set("Authorization", auth(cashier))
+    .send({ items: [{ productId: p.id, quantity: 2 }], paymentMethod: "Cash" })
+    .expect(201);
+  await request(app)
+    .put("/api/products/" + p.id)
+    .set("Authorization", auth(keeper))
+    .send({ name: "Stale edit", quantity: 10, expectedUpdatedAt: snapshot })
+    .expect(409);
+  assert.equal((await Product.findById(p.id)).quantity, 8);
+  await request(app)
+    .put("/api/products/" + p.id)
+    .set("Authorization", auth(keeper))
+    .send({ quantity: 10 })
+    .expect(428);
+  const current = await Product.findById(p.id);
+  await request(app)
+    .put("/api/products/" + p.id)
+    .set("Authorization", auth(keeper))
+    .send({
+      name: "Fresh edit",
+      quantity: 8,
+      expectedUpdatedAt: current.updatedAt.toISOString(),
+    })
+    .expect(200);
+});
+
+test("malformed product values and repeated query parameters return validation errors", async () => {
+  const p = await product();
+  const body = {
+    name: "Invalid",
+    barcode: "invalid-input",
+    category: "Dairy",
+    supplierId: supplier.id,
+    costPrice: 20,
+    sellingPrice: 30,
+    quantity: 1,
+  };
+  for (const change of [
+    { sellingPrice: "Infinity" },
+    { costPrice: null },
+    { quantity: true },
+    { sku: 123 },
+    { description: [] },
+  ]) {
+    await request(app)
+      .post("/api/products/CreateProduct")
+      .set("Authorization", auth(keeper))
+      .send({ ...body, ...change })
+      .expect(400);
+  }
+  await request(app)
+    .put("/api/products/" + p.id)
+    .set("Authorization", auth(keeper))
+    .send({ sellingPrice: "Infinity" })
+    .expect(400);
+  await request(app)
+    .get("/api/products?search=a&search=b")
+    .set("Authorization", auth(keeper))
+    .expect(400);
+});
+
+test("empty checkout and invalid restock costs are validation errors", async () => {
+  await request(app)
+    .post("/api/sales/checkout")
+    .set("Authorization", auth(cashier))
+    .expect(400);
+  const p = await product();
+  for (const unitCost of [null, true, [], {}])
+    await request(app)
+      .post("/api/restock")
+      .set("Authorization", auth(keeper))
+      .send({
+        productId: p.id,
+        supplierId: supplier.id,
+        quantityAdded: 1,
+        unitCost,
+      })
+      .expect(400);
+});
+
+test("unsupported and corrupt image uploads return actionable validation errors", async () => {
+  await request(app)
+    .put("/api/profile")
+    .set("Authorization", auth(cashier))
+    .attach("avatar", Buffer.from("not an image"), "bad.txt")
+    .expect(400);
+  await request(app)
+    .put("/api/profile")
+    .set("Authorization", auth(cashier))
+    .attach("avatar", Buffer.from("not an image"), "bad.png")
+    .expect(400);
+});
+
+test("cross-origin staff updates allow PATCH preflight", async () => {
+  const result = await request(app)
+    .options("/api/staff/" + keeper.id)
+    .set("Origin", "http://localhost:5173")
+    .set("Access-Control-Request-Method", "PATCH")
+    .expect(204);
+  assert.ok(
+    result.headers["access-control-allow-methods"].split(",").includes("PATCH"),
+  );
+});

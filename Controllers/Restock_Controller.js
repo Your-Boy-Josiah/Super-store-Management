@@ -4,6 +4,7 @@ const Supplier = require("../Models/Suppliers");
 const mongoose = require("mongoose");
 const { randomUUID } = require("node:crypto");
 const Audit = require("../Services/Audit_Services");
+const { isNumericInput } = require("../Utililty/Validation");
 exports.ProcessRestock = async (req, res, next) => {
   const { productId, supplierId, batchNumber, expiryDate, notes } = req.body;
   const quantityAdded = Number(req.body.quantityAdded),
@@ -11,6 +12,8 @@ exports.ProcessRestock = async (req, res, next) => {
   if (
     !mongoose.isValidObjectId(productId) ||
     !mongoose.isValidObjectId(supplierId) ||
+    !isNumericInput(req.body.quantityAdded) ||
+    !isNumericInput(req.body.unitCost) ||
     !Number.isSafeInteger(quantityAdded) ||
     quantityAdded <= 0 ||
     req.body.unitCost === undefined ||
@@ -19,12 +22,10 @@ exports.ProcessRestock = async (req, res, next) => {
     unitCost < 0 ||
     (expiryDate && !Number.isFinite(Date.parse(expiryDate)))
   )
-    return res
-      .status(400)
-      .json({
-        message:
-          "Provide valid product, supplier, positive whole quantity, nonnegative cost and expiry date",
-      });
+    return res.status(400).json({
+      message:
+        "Provide valid product, supplier, positive whole quantity, nonnegative cost and expiry date",
+    });
   let session;
   try {
     session = await mongoose.startSession();
@@ -38,6 +39,11 @@ exports.ProcessRestock = async (req, res, next) => {
           { status: 404 },
         );
       product.quantity += quantityAdded;
+      if (!Number.isSafeInteger(product.quantity))
+        throw Object.assign(
+          new Error("Resulting stock quantity is too large"),
+          { status: 400 },
+        );
       product.costPrice = unitCost;
       if (expiryDate) product.expiryDate = new Date(expiryDate);
       await product.save({ session });

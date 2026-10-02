@@ -42,7 +42,10 @@ const fileFilter = (req, file, cb) => {
     cb(null, true);
   } else {
     cb(
-      new Error("Please upload an image file (JPEG, PNG, WebP, or HEIC)."),
+      Object.assign(
+        new Error("Please upload an image file (JPEG, PNG, WebP, or HEIC)."),
+        { status: 400 },
+      ),
       false,
     );
   }
@@ -84,7 +87,17 @@ const processImage = async (req, res, next) => {
 
     next();
   } catch (error) {
-    next(new Error(`Image conversion failed: ${error.message}`));
+    await fs.promises.unlink(outputPath).catch(() => {});
+    if (["EACCES", "EPERM", "ENOSPC", "EROFS"].includes(error.code))
+      return next(error);
+    next(
+      Object.assign(
+        new Error(
+          "This image could not be read. Choose a valid JPEG, PNG, WebP or GIF image.",
+        ),
+        { status: 400 },
+      ),
+    );
   }
 };
 

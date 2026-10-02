@@ -19,6 +19,8 @@
 
 ## Validation
 
+The second review added regression coverage for blank optional SKUs, stale inventory forms overwriting completed sales, malformed numeric/text inputs, empty request bodies, corrupt/unsupported uploads, and cross-origin PATCH requests. Stock edits now include the product's `expectedUpdatedAt` timestamp; stale edits return 409 instead of overwriting newer inventory. The frontend sends this timestamp automatically. These cases bring the automated suite to 19 tests.
+
 Automated integration tests use a disposable MongoDB replica set. They cover authorization, signup escalation, avatars and cleanup, restock success/rollback, checkout rollback/concurrency, inactive accounts, stale token roles, PIN ownership/expiry/log redaction, file-path injection and protected staff management. Utility tests cover working-time expiry and recursive credential redaction.
 
 ## Required before production

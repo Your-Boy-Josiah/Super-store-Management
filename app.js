@@ -58,7 +58,7 @@ const corsOptions = {
     process.env.FRONTEND_ORIGINS ||
     "http://localhost:5173,http://127.0.0.1:5173"
   ).split(","),
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
   credentials: true,
 };
 // CORS: Allows frontend connections
@@ -67,6 +67,17 @@ app.use(cors(corsOptions));
 // Body Parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use((req, res, next) => {
+  if (req.body === undefined) req.body = {};
+  if (
+    req.body === null ||
+    typeof req.body !== "object" ||
+    Array.isArray(req.body)
+  ) {
+    return res.status(400).json({ message: "Request body must be an object" });
+  }
+  next();
+});
 
 // Data Sanitization: Mutates inputs in place to prevent NoSQL injection
 // Avoids overwriting req.query directly, which throws an error on read-only getters

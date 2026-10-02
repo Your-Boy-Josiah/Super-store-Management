@@ -7,8 +7,7 @@
 
 const Product = require("../Models/Products");
 const PM = require("mongoose");
-const fs = require("fs");
-const path = require("path");
+const { validateProductFields } = require("../Utililty/Validation");
 const AuditService = require("../Services/Audit_Services");
 
 // Helper tool to stop users from crashing the search with special characters like ( or *
@@ -25,6 +24,9 @@ const { removeImage } = require("../Utililty/Files");
 // ==============================================================
 exports.CreateProduct = async (req, res, next) => {
   try {
+    const validationError = validateProductFields(req.body);
+    if (validationError)
+      return res.status(400).json({ message: validationError });
     const {
       name,
       barcode,
@@ -169,6 +171,18 @@ exports.GetProducts = async (req, res, next) => {
     const skip = (page - 1) * limit;
 
     const { search, category, lowStock } = req.query;
+    if (
+      [search, category, lowStock].some(
+        (value) => value !== undefined && typeof value !== "string",
+      )
+    ) {
+      return res
+        .status(400)
+        .json({
+          message:
+            "Search, category and lowStock must each be a single text value",
+        });
+    }
     const query = { isActive: true };
 
     if (search) {
@@ -269,12 +283,36 @@ exports.UpdateProduct = async (req, res, next) => {
       "expiryDate",
       "description",
       "supplierId",
+      "expectedUpdatedAt",
     ];
     const updateData = Object.fromEntries(
       Object.entries(req.body).filter(([key]) => allowed.includes(key)),
     );
     if (Object.keys(req.body).some((key) => !allowed.includes(key)))
       return res.status(400).json({ message: "Unsupported product field" });
+
+    const validationError = validateProductFields(updateData);
+    if (validationError)
+      return res.status(400).json({ message: validationError });
+    const expectedUpdatedAt = updateData.expectedUpdatedAt;
+    delete updateData.expectedUpdatedAt;
+    if (updateData.quantity !== undefined && !expectedUpdatedAt) {
+      return res
+        .status(428)
+        .json({
+          message:
+            "Reload this product before adjusting stock; expectedUpdatedAt is required",
+        });
+    }
+    if (
+      expectedUpdatedAt !== undefined &&
+      (typeof expectedUpdatedAt !== "string" ||
+        !Number.isFinite(Date.parse(expectedUpdatedAt)))
+    ) {
+      return res
+        .status(400)
+        .json({ message: "expectedUpdatedAt must be a valid timestamp" });
+    }
 
     const textFields = [
       "name",
@@ -318,7 +356,11 @@ exports.UpdateProduct = async (req, res, next) => {
         .status(400)
         .json({ message: "Perishable products need a valid expiry date" });
     if (updateData.expiryDate === "") updateData.expiryDate = null;
-    if (updateData.sku) updateData.sku = updateData.sku.trim().toUpperCase();
+    const clearSku =
+      updateData.sku !== undefined && updateData.sku.trim() === "";
+    if (clearSku) delete updateData.sku;
+    else if (updateData.sku)
+      updateData.sku = updateData.sku.trim().toUpperCase();
     if (updateData.barcode) updateData.barcode = updateData.barcode.trim();
     if (updateData.supplierId)
       updateData.supplierId = updateData.supplierId.trim();
@@ -330,6 +372,7 @@ exports.UpdateProduct = async (req, res, next) => {
       updateData.quantity = Number(updateData.quantity);
     if (updateData.reorderLevel !== undefined && updateData.reorderLevel !== "")
       updateData.reorderLevel = Number(updateData.reorderLevel);
+    if (updateData.reorderLevel === "") delete updateData.reorderLevel;
     if (updateData.isPerishable !== undefined)
       updateData.isPerishable = String(updateData.isPerishable) === "true";
 
@@ -340,10 +383,23 @@ exports.UpdateProduct = async (req, res, next) => {
       // Old file is removed only after the update succeeds.
     }
 
-    const updatedProduct = await Product.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    });
+    const updatedProduct = await Product.findOneAndUpdate(
+      {
+        _id: id,
+        updatedAt: expectedUpdatedAt
+          ? new Date(expectedUpdatedAt)
+          : existingProduct.updatedAt,
+      },
+      { $set: updateData, ...(clearSku ? { $unset: { sku: 1 } } : {}) },
+      { returnDocument: "after", runValidators: true },
+    );
+    if (!updatedProduct)
+      return res
+        .status(409)
+        .json({
+          message:
+            "This product changed since it was loaded. Close this form, refresh inventory, and try again.",
+        });
 
     if (req.file) await removeImage(existingProduct.image);
 
