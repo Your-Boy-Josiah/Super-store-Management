@@ -129,3 +129,4 @@ npm-debug.log*
 *.log
 
 Test_Client.rest
+frontend/dist/

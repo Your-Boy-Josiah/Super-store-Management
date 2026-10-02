@@ -1,81 +1,68 @@
-// ===============================================================
-//  Sales_Service.js
-//  Handles all heavy database transactions for customer checkouts.
-//  Encapsulates ACID operations to ensure inventory data consistency.
-// ===============================================================
-
-const Sales = require('../Models/Sales');
-const Products = require('../Models/Products');
-const PM = require('mongoose');
-
-// ==============================================================
-// EXECUTE POS CHECKOUT TRANSACTION
-// Handles stock verification, deduction, and receipt generation.
-// ==============================================================
+const Sales = require("../Models/Sales");
+const Products = require("../Models/Products");
+const mongoose = require("mongoose");
+const { randomUUID } = require("node:crypto");
 exports.executeCheckout = async (items, paymentMethod, cashierId) => {
-  // 1. Start a MongoDB session to enable ACID transaction safety
-  const session = await PM.startSession();
-  session.startTransaction();
-
+  const session = await mongoose.startSession();
   try {
-    let totalAmount = 0;
-    const processedItems = [];
-
-    // 2. Loop through every cart item, verify stock, and calculate prices
-    for (const cartItem of items) {
-      const product = await Products.findById(cartItem.productId).session(session);
-
-      if (!product || !product.isActive) {
-        throw new Error(`Product with ID: ${cartItem.productId} is invalid or inactive`);
+    let sale;
+    await session.withTransaction(async () => {
+      let totalAmount = 0;
+      const processedItems = [];
+      for (const item of items) {
+        const product = await Products.findById(item.productId).session(
+          session,
+        );
+        if (!product?.isActive)
+          throw Object.assign(new Error("Product invalid or inactive"), {
+            status: 400,
+          });
+        if (product.quantity < item.quantity)
+          throw Object.assign(
+            new Error("Insufficient stock for " + product.name),
+            { status: 400 },
+          );
+        if (
+          product.isPerishable &&
+          product.expiryDate &&
+          product.expiryDate < new Date()
+        )
+          throw Object.assign(
+            new Error("Product has expired: " + product.name),
+            { status: 400 },
+          );
+        const subTotal =
+          Math.round(product.sellingPrice * item.quantity * 100) / 100;
+        totalAmount = Math.round((totalAmount + subTotal) * 100) / 100;
+        processedItems.push({
+          productId: product._id,
+          name: product.name,
+          quantity: item.quantity,
+          priceAtTimeOfSale: product.sellingPrice,
+          subTotal,
+        });
+        product.quantity -= item.quantity;
+        await product.save({ session });
       }
-
-      if (product.quantity < cartItem.quantity) {
-        throw new Error(`Insufficient stock for ${product.name}. Only ${product.quantity} left.`);
-      }
-
-      const priceAtTimeOfSale = product.sellingPrice;
-      const subTotal = priceAtTimeOfSale * cartItem.quantity;
-      totalAmount += subTotal;
-
-      processedItems.push({
-        productId: product._id,
-        name: product.name,
-        quantity: cartItem.quantity,
-        priceAtTimeOfSale,
-        subTotal,
-      });
-
-      // 3. Deduct stock safely inside the transaction session
-      product.quantity -= cartItem.quantity;
-      await product.save({ session });
-    }
-
-    // 4. Generate a unique receipt number
-    const datePrefix = new Date().toISOString().split('T')[0].replace(/-/g, '');
-    const randomSuffix = Math.floor(100000 + Math.random() * 900000);
-    const receiptNumber = `REC-${datePrefix}-${randomSuffix}`;
-
-    // 5. Save the completed sales ledger record
-    const newSale = new Sales({
-      receiptNumber,
-      cashierId,
-      items: processedItems,
-      totalAmount,
-      paymentMethod,
+      [sale] = await Sales.create(
+        [
+          {
+            receiptNumber:
+              "REC-" +
+              new Date().toISOString().slice(0, 10).replace(/-/g, "") +
+              "-" +
+              randomUUID(),
+            cashierId,
+            items: processedItems,
+            totalAmount,
+            paymentMethod,
+          },
+        ],
+        { session },
+      );
     });
-
-    const savedSale = await newSale.save({ session });
-
-    // 6. Commit all writes simultaneously (All-or-Nothing)
-    await session.commitTransaction();
-    session.endSession();
-
-    return savedSale;
-
-  } catch (error) {
-    // 7. Revert all changes if any single item fails during checkout
-    await session.abortTransaction();
-    session.endSession();
-    throw error;
+    return sale;
+  } finally {
+    await session.endSession();
   }
 };

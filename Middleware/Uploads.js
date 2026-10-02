@@ -4,16 +4,16 @@
 //  Imported as middleware into resource route files.
 // ============================================================
 
-const multer = require('multer');
-const sharp = require('sharp');
-const path = require('path');
-const fs = require('fs');
+const multer = require("multer");
+const sharp = require("sharp");
+const path = require("path");
+const fs = require("fs");
 
 // ============================================================
 // UPLOAD DIRECTORY SETUP
 // Ensures the destination folder exists on disk before saving
 // ============================================================
-const uploadDir = 'uploads/';
+const uploadDir = require("../Utililty/Files").uploadRoot;
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -30,18 +30,24 @@ const storage = multer.memoryStorage();
 // ============================================================
 const fileFilter = (req, file, cb) => {
   const allowedTypes = [
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-    'image/gif',
-    'image/heic',
-    'image/heif',
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
   ];
 
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Please upload an image file (JPEG, PNG, WebP, or HEIC).'), false);
+    cb(
+      Object.assign(
+        new Error("Please upload an image file (JPEG, PNG, WebP, or HEIC)."),
+        { status: 400 },
+      ),
+      false,
+    );
   }
 };
 
@@ -69,21 +75,29 @@ const processImage = async (req, res, next) => {
 
   try {
     // Convert to WebP format at 85% quality and save to disk
-    await sharp(req.file.buffer)
-      .webp({ quality: 85 })
-      .toFile(outputPath);
+    await sharp(req.file.buffer).webp({ quality: 85 }).toFile(outputPath);
 
     // Update req.file properties for subsequent controller use
     req.file.path = outputPath;
     req.file.filename = filename;
-    req.file.mimetype = 'image/webp';
+    req.file.mimetype = "image/webp";
 
     // Clear memory buffer
     delete req.file.buffer;
 
     next();
   } catch (error) {
-    next(new Error(`Image conversion failed: ${error.message}`));
+    await fs.promises.unlink(outputPath).catch(() => {});
+    if (["EACCES", "EPERM", "ENOSPC", "EROFS"].includes(error.code))
+      return next(error);
+    next(
+      Object.assign(
+        new Error(
+          "This image could not be read. Choose a valid JPEG, PNG, WebP or GIF image.",
+        ),
+        { status: 400 },
+      ),
+    );
   }
 };
 
